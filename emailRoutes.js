@@ -7,7 +7,7 @@ const router = express.Router();
 // Get them from your SMTP2GO dashboard: Sender -> SMTP Users
 const transporter = nodemailer.createTransport({
     host: 'mail-eu.smtp2go.com',
-    port: 587, // switched from 2525 — Railway's network was timing out on 2525
+    port: 8025, // switched from 587 — Railway's network was timing out on 2525
     secure: false, // 587 uses STARTTLS, not implicit SSL
     auth: {
         user: process.env.SMTP_USER,
