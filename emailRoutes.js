@@ -7,12 +7,13 @@ const router = express.Router();
 // Get them from your SMTP2GO dashboard: Sender -> SMTP Users
 const transporter = nodemailer.createTransport({
     host: 'mail-eu.smtp2go.com',
-    port: 2525, // Alternative ports: 8025, 587, 80, 25 (TLS). Use 465/8465/443 if you want SSL instead.
-    secure: false, // true only if using an SSL port (465/8465/443)
+    port: 587, // switched from 2525 — Railway's network was timing out on 2525
+    secure: false, // 587 uses STARTTLS, not implicit SSL
     auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
     },
+    connectionTimeout: 10000, // fail fast (10s) instead of hanging
 });
 
 const FROM_ADDRESS = '"O.S Travel & Tours" <noreply@ostravels.com>'; // must be a verified sender in SMTP2GO
