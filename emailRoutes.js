@@ -54,7 +54,7 @@ router.post('/status-update', async (req, res) => {
                 You can log in to your dashboard anytime to view full details of your application.
             </p>
             <div style="text-align:center; margin-top:24px;">
-                <a href="https://ostravels.com/dashboard" style="background:#2563eb; color:#fff; text-decoration:none; padding:12px 28px; border-radius:8px; font-weight:bold; font-size:14px;">View My Application</a>
+                <a href="https://ostravel.pk/dashboard" style="background:#2563eb; color:#fff; text-decoration:none; padding:12px 28px; border-radius:8px; font-weight:bold; font-size:14px;">View My Application</a>
             </div>
         </div>
         <div style="background:#f8fafc; padding:16px; text-align:center; font-size:11px; color:#94a3b8;">
@@ -106,7 +106,7 @@ router.post('/edit-access', async (req, res) => {
                    </p>`
         }
             <div style="text-align:center; margin-top:24px;">
-                <a href="https://ostravels.com/dashboard" style="background:#2563eb; color:#fff; text-decoration:none; padding:12px 28px; border-radius:8px; font-weight:bold; font-size:14px;">Go to My Dashboard</a>
+                <a href="https://ostravel.pk/dashboard" style="background:#2563eb; color:#fff; text-decoration:none; padding:12px 28px; border-radius:8px; font-weight:bold; font-size:14px;">Go to My Dashboard</a>
             </div>
         </div>
         <div style="background:#f8fafc; padding:16px; text-align:center; font-size:11px; color:#94a3b8;">
