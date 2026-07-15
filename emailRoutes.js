@@ -66,8 +66,8 @@ router.post('/status-update', async (req, res) => {
             </ul>
 
             <p style="font-size: 14px; margin: 0 0 4px;">For any assistance or to book our services, please contact us:</p>
-            <p style="font-size: 14px; margin: 0 0 2px;">📞 Phone: 0333-5542877</p>
-            <p style="font-size: 14px; margin: 0 0 2px;">📧 Email: info@ostravel.pk</p>
+            <p style="font-size: 14px; margin: 0 0 2px;">📞 Phone: 051-2120701</p>
+            <p style="font-size: 14px; margin: 0 0 2px;">📧 Email: ostravelsisb@gmail.com</p>
             <p style="font-size: 14px; margin: 0 0 20px;">🌐 <a href="https://www.ostravel.pk/" style="color: #2563eb;">https://www.ostravel.pk/</a></p>
 
             <div style="text-align: center; margin: 24px 0 8px;">
