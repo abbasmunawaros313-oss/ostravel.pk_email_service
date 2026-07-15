@@ -150,8 +150,7 @@ router.post('/edit-access', async (req, res) => {
                    style="background: #2563eb; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: bold; font-size: 14px;">
                     Go to My Dashboard
                 </a>
-            </div>
-
+            </div><br/>
             <p style="font-size: 14px; margin: 24px 0 0; color: #475569;">
                 Best regards,<br/>
                 <strong>OS Travel and Tours Team</strong>
