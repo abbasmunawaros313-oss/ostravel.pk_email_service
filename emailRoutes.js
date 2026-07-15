@@ -245,7 +245,7 @@ router.post('/umrah-status-update', async (req, res) => {
     }
 });
 
-// --- Admin Message Email (Visa applications — e.g. "please re-upload X") ---
+// --- Admin Message Email (Visa applications) ---
 router.post('/application-message', async (req, res) => {
     const { to, applicantName, applicationNumber, country, message } = req.body;
 
@@ -328,6 +328,59 @@ router.post('/umrah-message', async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         console.error('Email send error (umrah-message):', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// --- Document Verified Email ---
+router.post('/verify-document', async (req, res) => {
+    const { to, applicantName, applicationNumber, country, docLabel, allVerified } = req.body;
+
+    if (!to || !docLabel) {
+        return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+
+    const body = `
+        <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 12px;">Dear ${applicantName || 'Applicant'},</p>
+
+        <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 16px;">
+            Great news! Your <b>${docLabel}</b> has been successfully verified ✅ for your visa
+            application ${applicationNumber ? `<b>${applicationNumber}</b>` : ''}${country ? ` (${country})` : ''}.
+        </p>
+
+        ${allVerified
+            ? `<div style="background: #f0fdf4; border-left: 4px solid #10b981; padding: 14px 16px; margin: 0 0 20px; border-radius: 0 6px 6px 0; color: #065f46; font-size: 14px;">
+                   🎉 All your documents have been verified! Our team will now proceed with processing your visa application.
+               </div>`
+            : `<div style="background: #eff6ff; border-left: 4px solid #3b82f6; padding: 14px 16px; margin: 0 0 20px; border-radius: 0 6px 6px 0; color: #1e3a8a; font-size: 14px;">
+                   Our team is still reviewing your remaining documents. You'll be notified as each one is verified.
+               </div>`
+        }
+
+        ${contactBlockVisa}
+
+        <div style="text-align: center; margin-top: 24px;">
+            <a href="https://ostravel.pk/dashboard" style="background: #2563eb; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: bold; font-size: 14px;">View My Application</a>
+        </div>
+
+        <p style="color: #475569; font-size: 14px; margin: 24px 0 0;">
+            Best regards,<br/>
+            <b>OS Travel and Tours Team</b>
+        </p>
+    `;
+
+    try {
+        await transporter.sendMail({
+            from: FROM_ADDRESS,
+            to,
+            subject: allVerified
+                ? '✅ All Documents Verified — Your Application Is Being Processed'
+                : `✅ Document Verified: ${docLabel}`,
+            html: wrapEmail(body),
+        });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Email send error (verify-document):', err);
         res.status(500).json({ success: false, message: err.message });
     }
 });
