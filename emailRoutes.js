@@ -245,6 +245,50 @@ router.post('/umrah-status-update', async (req, res) => {
     }
 });
 
+// --- Admin Message Email (Visa applications — e.g. "please re-upload X") ---
+router.post('/application-message', async (req, res) => {
+    const { to, applicantName, applicationNumber, country, message } = req.body;
+
+    if (!to || !message) {
+        return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+
+    const body = `
+        <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 12px;">Dear ${applicantName || 'Applicant'},</p>
+
+        <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 16px;">
+            You have a new message from our team regarding your visa application
+            ${applicationNumber ? `<b>${applicationNumber}</b>` : ''}${country ? ` (${country})` : ''}:
+        </p>
+
+        <div style="background: #fffbeb; border-left: 4px solid #f59e0b; padding: 14px 16px; margin: 0 0 20px; border-radius: 0 6px 6px 0; color: #92400e; font-size: 14px; white-space: pre-wrap;">📋 ${message}</div>
+
+        ${contactBlockGeneral}
+
+        <div style="text-align: center; margin-top: 24px;">
+            <a href="https://ostravel.pk/dashboard" style="background: #2563eb; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: bold; font-size: 14px;">Go to My Dashboard</a>
+        </div>
+
+        <p style="color: #475569; font-size: 14px; margin: 24px 0 0;">
+            Best regards,<br/>
+            <b>OS Travel and Tours Team</b>
+        </p>
+    `;
+
+    try {
+        await transporter.sendMail({
+            from: FROM_ADDRESS,
+            to,
+            subject: 'Action Required: New Message About Your Visa Application',
+            html: wrapEmail(body),
+        });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Email send error (application-message):', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // --- Umrah Admin Message Email ---
 router.post('/umrah-message', async (req, res) => {
     const { to, applicantName, hotel, message } = req.body;
