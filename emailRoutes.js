@@ -57,14 +57,28 @@ router.post('/status-update', async (req, res) => {
         return res.status(400).json({ success: false, message: 'Missing required fields' });
     }
 
+    // Updated 7-stage visa pipeline
     const statusColors = {
-        'Doc Received': '#3b82f6',
-        'Analyzing':    '#f59e0b',
-        'Approved':     '#10b981',
-        'Rejected':     '#ef4444',
+        'Doc Received':    '#3b82f6',
+        'Analyzing':       '#f59e0b',
+        'Req Document':    '#fb923c',
+        'Visa in Process': '#6366f1',
+        'Interview':       '#a855f7',
+        'Approve':         '#10b981',
+        'Reject':          '#ef4444',
     };
     const color = statusColors[newStatus] || '#334155';
-    const isApproved = newStatus === 'Approved';
+    const isApproved = newStatus === 'Approve';
+    const isRejected = newStatus === 'Reject';
+
+    // Per-status "what's happening" line for the in-between stages
+    const statusMessages = {
+        'Doc Received':    'We have received your documents and they are now in our queue for review.',
+        'Analyzing':       'Our team is currently analyzing the documents you submitted.',
+        'Req Document':    'We need an additional document from you before we can proceed. Please check your dashboard for details.',
+        'Visa in Process': 'Your visa application has moved forward and is now being processed.',
+        'Interview':       'Your application has reached the interview stage. Please check your dashboard for scheduling details.',
+    };
 
     const body = `
         <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 12px;">Dear ${applicantName || 'Applicant'},</p>
@@ -77,10 +91,17 @@ router.post('/status-update', async (req, res) => {
                <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 16px;">
                    Thank you for choosing OS Travel and Tours for your visa needs.
                </p>`
+            : isRejected
+            ? `<p style="color: #1a1a1a; font-size: 15px; margin: 0 0 16px;">
+                   We regret to inform you that your visa application <b>${applicationNumber || ''}</b> for
+                   <b>${country || ''}</b> (${visaType || 'Visa'}) has been <b>rejected</b>. Please log in to your
+                   dashboard for further details.
+               </p>`
             : `<p style="color: #1a1a1a; font-size: 15px; margin: 0 0 16px;">
                    The status of your visa application <b>${applicationNumber || ''}</b> for
                    <b>${country || ''}</b> (${visaType || 'Visa'}) has been updated.
-               </p>`
+               </p>
+               ${statusMessages[newStatus] ? `<p style="color: #1a1a1a; font-size: 15px; margin: 0 0 16px;">${statusMessages[newStatus]}</p>` : ''}`
         }
 
         <div style="text-align: center; margin: 20px 0;">
@@ -115,11 +136,22 @@ router.post('/status-update', async (req, res) => {
         </p>
     `;
 
+    // Subject line per status
+    const subjects = {
+        'Approve':         '🎉 Your Visa Has Been Approved!',
+        'Reject':          `Your Visa Application Status: Rejected`,
+        'Doc Received':    'Your Visa Application Status: Documents Received',
+        'Analyzing':       'Your Visa Application Status: Under Analysis',
+        'Req Document':    'Action Required: Additional Document Needed',
+        'Visa in Process': 'Your Visa Application Status: In Process',
+        'Interview':       'Your Visa Application Status: Interview Stage',
+    };
+
     try {
         await transporter.sendMail({
             from: FROM_ADDRESS,
             to,
-            subject: isApproved ? '🎉 Your Visa Has Been Approved!' : `Your Visa Application Status: ${newStatus}`,
+            subject: subjects[newStatus] || `Your Visa Application Status: ${newStatus}`,
             html: wrapEmail(body),
         });
         res.json({ success: true });
