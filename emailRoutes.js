@@ -417,4 +417,140 @@ router.post('/verify-document', async (req, res) => {
     }
 });
 
+// ─── ADD THIS ROUTE INTO YOUR EXISTING routes.js (the file you pasted) ───────
+// Paste it right before `module.exports = router;` at the bottom.
+// Reuses your existing transporter, wrapEmail(), FROM_ADDRESS, and
+// contactBlockVisa — no new setup needed.
+
+// --- Consolidated Update Email (status + edit-access + message + documents, ONE email) ---
+router.post('/consolidated-update', async (req, res) => {
+    const {
+        to, applicantName, applicationNumber, country, visaType,
+        statusChange,     // { oldStatus, newStatus } | null
+        editAccess,       // { enabled, reason } | null
+        message,          // string | null
+        documentActions,  // [{ docLabel, action: 'verified' | 'reupload_requested' | 'deleted', message? }]
+    } = req.body;
+
+    if (!to) {
+        return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+
+    const statusColors = {
+        'Doc Received':    '#3b82f6',
+        'Analyzing':       '#f59e0b',
+        'Req Document':    '#fb923c',
+        'Visa in Process': '#6366f1',
+        'Interview':       '#a855f7',
+        'Approve':         '#10b981',
+        'Reject':          '#ef4444',
+    };
+
+    const sections = [];
+
+    // --- Status change block ---
+    if (statusChange && statusChange.newStatus) {
+        const color = statusColors[statusChange.newStatus] || '#334155';
+        sections.push(`
+            <div style="margin: 0 0 22px;">
+                <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 10px;"><b>📌 Application Status Updated</b></p>
+                <div style="text-align: center; margin: 12px 0;">
+                    <span style="display: inline-block; background: ${color}; color: #fff; font-weight: bold; padding: 8px 22px; border-radius: 999px; font-size: 14px; letter-spacing: 0.3px;">
+                        ${statusChange.newStatus}
+                    </span>
+                </div>
+            </div>
+        `);
+    }
+
+    // --- Edit access block ---
+    if (editAccess) {
+        sections.push(`
+            <div style="margin: 0 0 22px;">
+                <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 8px;">
+                    <b>${editAccess.enabled ? '🔓 Edit Access Enabled' : '🔒 Edit Access Locked'}</b>
+                </p>
+                <p style="color: #334155; font-size: 14px; margin: 0 0 8px;">
+                    ${editAccess.enabled
+                        ? 'Please log in to your dashboard and update the required document(s).'
+                        : 'Your submitted documents are now under review.'}
+                </p>
+                ${editAccess.reason ? `<div style="background: #eff6ff; border-left: 4px solid #2563eb; padding: 10px 14px; border-radius: 0 6px 6px 0; color: #1e3a8a; font-size: 14px;">📋 ${editAccess.reason}</div>` : ''}
+            </div>
+        `);
+    }
+
+    // --- Admin message block ---
+    if (message) {
+        sections.push(`
+            <div style="margin: 0 0 22px;">
+                <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 8px;"><b>💬 Message from Our Team</b></p>
+                <div style="background: #fffbeb; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 0 6px 6px 0; color: #92400e; font-size: 14px; white-space: pre-wrap;">${message}</div>
+            </div>
+        `);
+    }
+
+    // --- Document actions block ---
+    if (Array.isArray(documentActions) && documentActions.length > 0) {
+        const rows = documentActions.map(a => {
+            const tag = a.action === 'verified'
+                ? '<span style="color:#10b981;">✅ Verified</span>'
+                : a.action === 'reupload_requested'
+                ? '<span style="color:#f59e0b;">⚠️ Re-upload requested</span>'
+                : a.action === 'deleted'
+                ? '<span style="color:#ef4444;">🗑️ Removed</span>'
+                : a.action;
+            return `<li style="margin-bottom: 8px; color: #334155; font-size: 14px;">
+                        <b>${a.docLabel}</b> — ${tag}
+                        ${a.message ? `<br/><span style="font-size: 13px; color: #64748b;">${a.message}</span>` : ''}
+                    </li>`;
+        }).join('');
+        sections.push(`
+            <div style="margin: 0 0 22px;">
+                <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 8px;"><b>📄 Document Updates</b></p>
+                <ul style="margin: 0; padding-left: 18px;">${rows}</ul>
+            </div>
+        `);
+    }
+
+    if (sections.length === 0) {
+        return res.status(400).json({ success: false, message: 'Nothing to send' });
+    }
+
+    const body = `
+        <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 16px;">Dear ${applicantName || 'Applicant'},</p>
+
+        <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 20px;">
+            Here is a summary of the latest updates on your visa application
+            ${applicationNumber ? `<b>${applicationNumber}</b>` : ''}${country ? ` (${country}${visaType ? ', ' + visaType : ''})` : ''}:
+        </p>
+
+        ${sections.join('')}
+
+        ${contactBlockVisa}
+
+        <div style="text-align: center; margin-top: 24px;">
+            <a href="https://ostravel.pk/dashboard" style="background: #2563eb; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: bold; font-size: 14px;">View My Application</a>
+        </div>
+
+        <p style="color: #475569; font-size: 14px; margin: 24px 0 0;">
+            Best regards,<br/>
+            <b>OS Travel and Tours Team</b>
+        </p>
+    `;
+
+    try {
+        await transporter.sendMail({
+            from: FROM_ADDRESS,
+            to,
+            subject: `Update on Your Visa Application${applicationNumber ? ' — ' + applicationNumber : ''}`,
+            html: wrapEmail(body),
+        });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Email send error (consolidated-update):', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 module.exports = router;
