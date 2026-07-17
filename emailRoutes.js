@@ -1,5 +1,6 @@
 const express = require('express');
 const nodemailer = require('nodemailer');
+const PDFDocument = require('pdfkit');
 const router = express.Router();
 
 // --- SMTP2GO Transport Config ---
@@ -15,6 +16,22 @@ const transporter = nodemailer.createTransport({
 });
 
 const FROM_ADDRESS = '"O.S Travel & Tours" <ostravelsandtours@ostravels.com>';
+
+// --- Fetch a remote file and return it as a Buffer for nodemailer attachment ---
+async function fetchAttachment(url, filename) {
+    if (!url) return null;
+    try {
+        const fetch = (await import('node-fetch')).default;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const buffer = await res.buffer();
+        const contentType = res.headers.get('content-type') || 'application/octet-stream';
+        return { filename: filename || 'document', content: buffer, contentType };
+    } catch (err) {
+        console.error('Failed to fetch attachment:', err.message);
+        return null;
+    }
+}
 
 // --- Shared email shell ---
 function wrapEmail(bodyHtml) {
@@ -46,9 +63,186 @@ const contactBlockGeneral = `
     <p style="color: #334155; font-size: 14px; margin: 0 0 20px;">🌐 <a href="https://www.ostravel.pk/" style="color: #2563eb;">https://www.ostravel.pk/</a></p>
 `;
 
+// =====================================================================
+// --- Invoice PDF Generator ---
+// Builds a clean, professional one-page invoice PDF as a Buffer.
+// =====================================================================
+function generateInvoicePDF(data) {
+    const {
+        invoiceNumber, applicantName, email, phone,
+        recordType, country, visaType, planName,
+        amountPaid, visaFee, urgentFee, urgentProcessing,
+        transactionId, transactionRef, paymentMethod, paidAt,
+    } = data;
+
+    const fmt = (n) => Number(n || 0).toLocaleString('en-PK');
+    const paidDate = paidAt ? new Date(paidAt) : new Date();
+    const paidDateStr = isNaN(paidDate.getTime())
+        ? new Date().toLocaleDateString('en-PK', { dateStyle: 'long' })
+        : paidDate.toLocaleDateString('en-PK', { dateStyle: 'long' });
+
+    const isVisa = recordType === 'visa';
+    const serviceType = isVisa ? 'Visa Application' : 'Travel Insurance';
+
+    const breakdown = isVisa
+        ? [
+            { label: 'Visa Fee', amount: visaFee || (amountPaid - (urgentFee || 0)) },
+            ...(urgentProcessing ? [{ label: 'Urgent Processing Fee', amount: urgentFee || 0 }] : []),
+        ]
+        : [
+            { label: planName ? `Insurance Premium - ${planName}` : 'Insurance Premium', amount: amountPaid },
+        ];
+
+    return new Promise((resolve, reject) => {
+        try {
+            const doc = new PDFDocument({ size: 'A4', margin: 50 });
+            const chunks = [];
+            doc.on('data', (c) => chunks.push(c));
+            doc.on('end', () => resolve(Buffer.concat(chunks)));
+            doc.on('error', reject);
+
+            // --- Header band ---
+            doc.rect(0, 0, doc.page.width, 90).fill('#0f172a');
+            doc.fillColor('#ffffff').fontSize(20).font('Helvetica-Bold')
+                .text('O.S Travel & Tours', 50, 30);
+            doc.fontSize(9).font('Helvetica').fillColor('#94a3b8')
+                .text('www.ostravel.pk', 50, 55);
+
+            doc.fontSize(9).fillColor('#94a3b8').text('INVOICE', 0, 28, { align: 'right', width: doc.page.width - 50 });
+            doc.fontSize(13).font('Helvetica-Bold').fillColor('#ffffff')
+                .text(`#${invoiceNumber || '-'}`, 0, 42, { align: 'right', width: doc.page.width - 50 });
+            doc.fontSize(9).font('Helvetica').fillColor('#94a3b8')
+                .text(paidDateStr, 0, 60, { align: 'right', width: doc.page.width - 50 });
+
+            doc.fillColor('#000000');
+            let y = 120;
+
+            // --- Billed To / Service Details ---
+            doc.font('Helvetica-Bold').fontSize(10).fillColor('#64748b').text('BILLED TO', 50, y);
+            doc.font('Helvetica-Bold').fontSize(10).fillColor('#64748b').text('SERVICE DETAILS', 320, y);
+            y += 16;
+            doc.font('Helvetica-Bold').fontSize(12).fillColor('#0f172a').text(applicantName || '-', 50, y);
+            doc.font('Helvetica-Bold').fontSize(12).fillColor('#0f172a').text(serviceType, 320, y);
+            y += 16;
+            doc.font('Helvetica').fontSize(10).fillColor('#334155').text(email || '-', 50, y);
+            if (isVisa) {
+                doc.font('Helvetica').fontSize(10).fillColor('#334155').text(`Country: ${country || '-'}`, 320, y);
+            } else if (planName) {
+                doc.font('Helvetica').fontSize(10).fillColor('#334155').text(`Plan: ${planName}`, 320, y);
+            }
+            y += 14;
+            doc.font('Helvetica').fontSize(10).fillColor('#334155').text(phone || '-', 50, y);
+            if (isVisa && visaType) {
+                doc.font('Helvetica').fontSize(10).fillColor('#334155').text(`Type: ${visaType}`, 320, y);
+            }
+            y += 34;
+
+            // --- Fee table header ---
+            doc.rect(50, y, doc.page.width - 100, 26).fill('#f1f5f9');
+            doc.fillColor('#334155').font('Helvetica-Bold').fontSize(9)
+                .text('DESCRIPTION', 62, y + 8)
+                .text('AMOUNT (PKR)', 0, y + 8, { align: 'right', width: doc.page.width - 62 });
+            y += 26;
+
+            breakdown.forEach((row) => {
+                doc.fillColor('#334155').font('Helvetica').fontSize(10)
+                    .text(row.label, 62, y + 8)
+                    .text(fmt(row.amount), 0, y + 8, { align: 'right', width: doc.page.width - 62 });
+                doc.moveTo(50, y + 30).lineTo(doc.page.width - 50, y + 30).strokeColor('#e2e8f0').stroke();
+                y += 30;
+            });
+
+            // --- Total row ---
+            doc.rect(50, y, doc.page.width - 100, 32).fill('#0f172a');
+            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(11)
+                .text('TOTAL PAID', 62, y + 9)
+                .fillColor('#34d399')
+                .text(`PKR ${fmt(amountPaid)}`, 0, y + 9, { align: 'right', width: doc.page.width - 62 });
+            y += 55;
+
+            // --- Payment confirmation box ---
+            doc.rect(50, y, doc.page.width - 100, 78).fill('#f0fdf4').strokeColor('#bbf7d0').lineWidth(1).stroke();
+            doc.fillColor('#065f46').font('Helvetica-Bold').fontSize(11).text(`Payment PAID`, 62, y + 10);
+            doc.font('Helvetica').fontSize(9).fillColor('#065f46');
+            doc.text(`Transaction ID: ${transactionId || '-'}`, 62, y + 30);
+            doc.text(`Reference: ${transactionRef || '-'}`, 62, y + 45);
+            doc.text(`Method: ${paymentMethod || 'Bank Alfalah'}`, 62, y + 60);
+            y += 100;
+
+            // --- Footer ---
+            doc.font('Helvetica').fontSize(8).fillColor('#94a3b8')
+                .text('This is an automated invoice from O.S Travel & Tours - www.ostravel.pk', 50, y, {
+                    align: 'center', width: doc.page.width - 100,
+                });
+
+            doc.end();
+        } catch (err) {
+            reject(err);
+        }
+    });
+}
+
+// --- Invoice Email (PDF attached) ---
+router.post('/invoice', async (req, res) => {
+    const {
+        to, recordType, invoiceNumber, applicantName, email, phone,
+        country, visaType, planName, amountPaid, visaFee, urgentFee,
+        urgentProcessing, transactionId, transactionRef, paymentMethod, paidAt,
+    } = req.body;
+
+    if (!to || !amountPaid) return res.status(400).json({ success: false, message: 'Missing required fields' });
+
+    const isVisa = recordType === 'visa';
+    const serviceLine = isVisa
+        ? `visa application ${invoiceNumber ? `<b>${invoiceNumber}</b>` : ''}${country ? ` for <b>${country}</b>` : ''}`
+        : `travel insurance policy ${invoiceNumber ? `<b>${invoiceNumber}</b>` : ''}`;
+
+    const body = `
+        <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 12px;">Dear ${applicantName || 'Customer'},</p>
+        <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 16px;">Thank you for your payment! Your ${serviceLine} has been confirmed. ✅</p>
+        <div style="background: #f0fdf4; border-left: 4px solid #10b981; border-radius: 0 8px 8px 0; padding: 14px 16px; margin: 0 0 20px;">
+            <p style="color: #065f46; font-size: 14px; margin: 0; font-weight: bold;">📎 Your invoice is attached to this email as a PDF.</p>
+            <p style="color: #64748b; font-size: 13px; margin: 4px 0 0;">You can also view it anytime from your dashboard.</p>
+        </div>
+        <div style="background: #f8fafc; border-radius: 10px; padding: 14px 16px; margin: 0 0 20px;">
+            <p style="color: #334155; font-size: 14px; margin: 0 0 4px;"><b>Amount Paid:</b> PKR ${Number(amountPaid || 0).toLocaleString('en-PK')}</p>
+            <p style="color: #334155; font-size: 14px; margin: 0;"><b>Transaction ID:</b> ${transactionId || '-'}</p>
+        </div>
+        ${contactBlockVisa}
+        <div style="text-align: center; margin-top: 24px;">
+            <a href="https://ostravel.pk/dashboard" style="background: #2563eb; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: bold; font-size: 14px;">View My Dashboard</a>
+        </div>
+        <p style="color: #475569; font-size: 14px; margin: 24px 0 0;">Best regards,<br/><b>OS Travel and Tours Team</b></p>
+    `;
+
+    try {
+        const pdfBuffer = await generateInvoicePDF({
+            invoiceNumber, applicantName, email, phone, recordType, country, visaType,
+            planName, amountPaid, visaFee, urgentFee, urgentProcessing,
+            transactionId, transactionRef, paymentMethod, paidAt,
+        });
+
+        await transporter.sendMail({
+            from: FROM_ADDRESS,
+            to,
+            subject: `Your Invoice — ${invoiceNumber || (isVisa ? 'Visa Application' : 'Insurance Policy')}`,
+            html: wrapEmail(body),
+            attachments: [{
+                filename: `Invoice-${invoiceNumber || 'OSTravels'}.pdf`,
+                content: pdfBuffer,
+                contentType: 'application/pdf',
+            }],
+        });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Email send error (invoice):', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // --- Status Change Email (Visa) ---
 router.post('/status-update', async (req, res) => {
-    const { to, applicantName, applicationNumber, country, visaType, oldStatus, newStatus } = req.body;
+    const { to, applicantName, applicationNumber, country, visaType, oldStatus, newStatus, decisionDocURL, decisionDocName } = req.body;
     if (!to || !newStatus) return res.status(400).json({ success: false, message: 'Missing required fields' });
 
     const statusColors = {
@@ -67,6 +261,14 @@ router.post('/status-update', async (req, res) => {
         'Interview': 'Your application has reached the interview stage. Please check your dashboard for scheduling details.',
     };
 
+    const decisionNoteHtml = (isApproved || isRejected) && decisionDocURL ? `
+        <div style="background: ${isApproved ? '#f0fdf4' : '#fef2f2'}; border-left: 4px solid ${isApproved ? '#10b981' : '#ef4444'}; border-radius: 0 8px 8px 0; padding: 14px 16px; margin: 16px 0;">
+            <p style="color: ${isApproved ? '#065f46' : '#991b1b'}; font-size: 14px; margin: 0 0 6px; font-weight: bold;">
+                ${isApproved ? '📎 Your approved visa letter is attached to this email.' : '📎 Your rejection letter is attached to this email.'}
+            </p>
+            <p style="color: #64748b; font-size: 13px; margin: 0;">You can also view it anytime from your dashboard.</p>
+        </div>` : '';
+
     const body = `
         <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 12px;">Dear ${applicantName || 'Applicant'},</p>
         ${isApproved
@@ -78,6 +280,7 @@ router.post('/status-update', async (req, res) => {
         <div style="text-align: center; margin: 20px 0;">
             <span style="display: inline-block; background: ${color}; color: #fff; font-weight: bold; padding: 10px 28px; border-radius: 999px; font-size: 15px; letter-spacing: 0.3px;">${newStatus}</span>
         </div>
+        ${decisionNoteHtml}
         <p style="color: #1a1a1a; font-size: 15px; margin: 20px 0 6px;"><b>🌟 What's Next?</b></p>
         <p style="color: #334155; font-size: 14px; margin: 0 0 6px;">${isApproved ? 'We offer a wide range of services to make your travel experience seamless:' : 'You can log in to your dashboard to view full details. We also offer:'}</p>
         <ul style="color: #334155; font-size: 14px; padding-left: 20px; margin: 6px 0 20px; line-height: 1.8;">
@@ -101,7 +304,26 @@ router.post('/status-update', async (req, res) => {
     };
 
     try {
-        await transporter.sendMail({ from: FROM_ADDRESS, to, subject: subjects[newStatus] || `Your Visa Application Status: ${newStatus}`, html: wrapEmail(body) });
+        const mailOptions = {
+            from: FROM_ADDRESS,
+            to,
+            subject: subjects[newStatus] || `Your Visa Application Status: ${newStatus}`,
+            html: wrapEmail(body),
+        };
+
+        // Attach decision document if provided
+        if ((isApproved || isRejected) && decisionDocURL) {
+            const attachment = await fetchAttachment(decisionDocURL, decisionDocName || (isApproved ? 'approved_visa.pdf' : 'rejection_letter.pdf'));
+            if (attachment) {
+                mailOptions.attachments = [{
+                    filename: attachment.filename,
+                    content: attachment.content,
+                    contentType: attachment.contentType,
+                }];
+            }
+        }
+
+        await transporter.sendMail(mailOptions);
         res.json({ success: true });
     } catch (err) {
         console.error('Email send error (status-update):', err);
@@ -254,7 +476,9 @@ router.post('/consolidated-update', async (req, res) => {
         editAccess,       // { enabled, reason } | null
         message,          // string | null
         documentActions,  // [{ docLabel, action: 'verified' | 'reupload_requested' | 'deleted', message? }]
-        reuploadDocs,     // string[] | null — list of doc labels user can now re-upload
+        reuploadDocs,     // string[] | null
+        decisionDocURL,   // string | null — URL of approved visa / rejection letter
+        decisionDocName,  // string | null — filename for attachment
     } = req.body;
 
     if (!to) return res.status(400).json({ success: false, message: 'Missing required fields' });
@@ -269,14 +493,25 @@ router.post('/consolidated-update', async (req, res) => {
     // --- Status change block ---
     if (statusChange && statusChange.newStatus) {
         const color = statusColors[statusChange.newStatus] || '#334155';
+        const isApproved = statusChange.newStatus === 'Approve';
+        const isRejected = statusChange.newStatus === 'Reject';
         sections.push(`
             <div style="margin: 0 0 22px;">
                 <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 10px;"><b>📌 Application Status Updated</b></p>
+                ${isApproved ? '<p style="color: #1a1a1a; font-size: 15px; margin: 0 0 10px;">🎉 Congratulations! Your visa application has been <b>APPROVED!</b></p>' : ''}
+                ${isRejected ? '<p style="color: #1a1a1a; font-size: 15px; margin: 0 0 10px;">We regret to inform you that your visa application has been <b>rejected</b>.</p>' : ''}
                 <div style="text-align: center; margin: 12px 0;">
                     <span style="display: inline-block; background: ${color}; color: #fff; font-weight: bold; padding: 8px 22px; border-radius: 999px; font-size: 14px; letter-spacing: 0.3px;">
                         ${statusChange.newStatus}
                     </span>
                 </div>
+                ${(isApproved || isRejected) && decisionDocURL ? `
+                <div style="background: ${isApproved ? '#f0fdf4' : '#fef2f2'}; border-left: 4px solid ${isApproved ? '#10b981' : '#ef4444'}; border-radius: 0 8px 8px 0; padding: 12px 14px; margin-top: 12px;">
+                    <p style="color: ${isApproved ? '#065f46' : '#991b1b'}; font-size: 14px; margin: 0; font-weight: bold;">
+                        📎 ${isApproved ? 'Your approved visa letter is attached to this email.' : 'Your rejection letter is attached to this email.'}
+                    </p>
+                    <p style="color: #64748b; font-size: 13px; margin: 4px 0 0;">You can also view and download it from your dashboard.</p>
+                </div>` : ''}
             </div>
         `);
     }
@@ -374,12 +609,30 @@ router.post('/consolidated-update', async (req, res) => {
     `;
 
     try {
-        await transporter.sendMail({
+        const mailOptions = {
             from: FROM_ADDRESS,
             to,
             subject: `Update on Your Visa Application${applicationNumber ? ' — ' + applicationNumber : ''}`,
             html: wrapEmail(body),
-        });
+        };
+
+        // Attach decision document if provided (for Approve/Reject status)
+        const newStatus = statusChange?.newStatus;
+        if ((newStatus === 'Approve' || newStatus === 'Reject') && decisionDocURL) {
+            const attachment = await fetchAttachment(
+                decisionDocURL,
+                decisionDocName || (newStatus === 'Approve' ? 'approved_visa.pdf' : 'rejection_letter.pdf')
+            );
+            if (attachment) {
+                mailOptions.attachments = [{
+                    filename: attachment.filename,
+                    content: attachment.content,
+                    contentType: attachment.contentType,
+                }];
+            }
+        }
+
+        await transporter.sendMail(mailOptions);
         res.json({ success: true });
     } catch (err) {
         console.error('Email send error (consolidated-update):', err);
