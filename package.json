@@ -1,7 +1,7 @@
 {
   "name": "os-travel-email-service",
   "version": "1.0.0",
-  "description": "Standalone email notification service for O.S Travel & Tours (status updates + edit access alerts)",
+  "description": "Standalone email notification service for O.S Travel & Tours",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,9 +9,9 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
-    "fetch": "^1.1.0",
-    "node": "^26.5.0",
-    "nodemailer": "^6.9.13"
+    "node-fetch": "^2.7.0",
+    "nodemailer": "^6.9.13",
+    "pdfkit": "^0.15.0"
   },
   "engines": {
     "node": ">=18.0.0"
