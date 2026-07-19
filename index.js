@@ -4,12 +4,38 @@ const emailRoutes = require('./emailRoutes');
 
 const app = express();
 
-app.use(cors()); // allow requests from your frontend (ostravels.com)
+const allowedOrigins = [
+    'https://www.ostravel.pk',
+    'https://ostravel.pk',
+    'http://localhost:5173',
+    'http://localhost:3000',
+];
+
+const corsOptions = {
+    origin: (origin, callback) => {
+        // Allow requests with no origin (mobile apps, Postman, curl)
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error(`CORS: origin ${origin} not allowed`));
+        }
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+    optionsSuccessStatus: 200, // some browsers (IE11) choke on 204
+};
+
+// Handle preflight OPTIONS requests for ALL routes
+app.options('*', cors(corsOptions));
+
+// Apply CORS to all routes
+app.use(cors(corsOptions));
+
 app.use(express.json());
 
 app.use('/api/email', emailRoutes);
 
-// Simple health check, same style as your AutoEmail service
 app.get('/', (req, res) => {
     res.json({
         status: 'Server running',
@@ -17,7 +43,13 @@ app.get('/', (req, res) => {
         version: '1.0.0',
         endpoints: [
             'POST /api/email/status-update',
-            'POST /api/email/edit-access'
+            'POST /api/email/edit-access',
+            'POST /api/email/umrah-status-update',
+            'POST /api/email/application-message',
+            'POST /api/email/umrah-message',
+            'POST /api/email/verify-document',
+            'POST /api/email/consolidated-update',
+            'POST /api/email/invoice',
         ],
         timestamp: new Date().toISOString()
     });
