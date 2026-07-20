@@ -468,7 +468,7 @@ router.post('/verify-document', async (req, res) => {
     }
 });
 
-// --- Consolidated Update Email ---
+// --- Consolidated Update Email (Visa) ---
 router.post('/consolidated-update', async (req, res) => {
     const {
         to, applicantName, applicationNumber, country, visaType,
@@ -636,6 +636,123 @@ router.post('/consolidated-update', async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         console.error('Email send error (consolidated-update):', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// --- Consolidated Update Email (Umrah) ---
+// Mirrors /consolidated-update above, but for the Umrah field shape (hotel/
+// checkIn/checkOut instead of country/visaType, plus an optional payment
+// request block). Bundles status change + document actions + payment
+// request into ONE email, fired only from the front-end's per-row "Notify"
+// button — never automatically by individual admin actions.
+router.post('/umrah-consolidated-update', async (req, res) => {
+    const {
+        to, applicantName, requestNumber, hotel, checkIn, checkOut,
+        statusChange,     // { oldStatus, newStatus } | null
+        documentActions,  // [{ docLabel, action: 'requested' | 'verified' | 'rejected' | 'removed', message? }]
+        paymentChange,    // { amount, note } | null
+    } = req.body;
+
+    if (!to) return res.status(400).json({ success: false, message: 'Missing required fields' });
+
+    const statusColors = {
+        'Pending Review': '#f59e0b', 'Processing': '#3b82f6', 'Documents Required': '#fb923c',
+        'Payment Requested': '#8b5cf6', 'Paid': '#10b981', 'Completed': '#0d9488', 'Rejected': '#ef4444',
+    };
+
+    const sections = [];
+
+    // --- Status change block ---
+    if (statusChange && statusChange.newStatus) {
+        const color = statusColors[statusChange.newStatus] || '#334155';
+        const isCompleted = statusChange.newStatus === 'Completed';
+        const isRejected = statusChange.newStatus === 'Rejected';
+        sections.push(`
+            <div style="margin: 0 0 22px;">
+                <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 10px;"><b>📌 Request Status Updated</b></p>
+                ${isCompleted ? '<p style="color: #1a1a1a; font-size: 15px; margin: 0 0 10px;">🎉 Great news! Your Umrah package request has been finalized.</p>' : ''}
+                ${isRejected ? '<p style="color: #1a1a1a; font-size: 15px; margin: 0 0 10px;">We regret to inform you that this request has been <b>rejected</b>.</p>' : ''}
+                <div style="text-align: center; margin: 12px 0;">
+                    <span style="display: inline-block; background: ${color}; color: #fff; font-weight: bold; padding: 8px 22px; border-radius: 999px; font-size: 14px; letter-spacing: 0.3px;">
+                        ${statusChange.newStatus}
+                    </span>
+                </div>
+            </div>
+        `);
+    }
+
+    // --- Payment request block ---
+    if (paymentChange && paymentChange.amount) {
+        sections.push(`
+            <div style="margin: 0 0 22px;">
+                <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 8px;"><b>💳 Payment Requested</b></p>
+                <div style="background: #faf5ff; border-left: 4px solid #8b5cf6; border-radius: 0 8px 8px 0; padding: 12px 14px; color: #5b21b6; font-size: 14px;">
+                    <p style="margin: 0 0 4px;"><b>Amount Due:</b> PKR ${Number(paymentChange.amount).toLocaleString('en-PK')}</p>
+                    ${paymentChange.note ? `<p style="margin: 4px 0 0;">${paymentChange.note}</p>` : ''}
+                </div>
+                <p style="color: #64748b; font-size: 13px; margin: 8px 0 0;">Log in to your dashboard to complete payment.</p>
+            </div>
+        `);
+    }
+
+    // --- Document actions block ---
+    if (Array.isArray(documentActions) && documentActions.length > 0) {
+        const rows = documentActions.map(a => {
+            const tag = a.action === 'verified'
+                ? '<span style="color:#10b981;">✅ Verified</span>'
+                : a.action === 'requested'
+                ? '<span style="color:#fb923c;">📤 Requested — please upload</span>'
+                : a.action === 'rejected'
+                ? '<span style="color:#ef4444;">⚠️ Rejected — please re-upload</span>'
+                : a.action === 'removed'
+                ? '<span style="color:#94a3b8;">🗑️ Removed</span>'
+                : a.action;
+            return `<li style="margin-bottom: 8px; color: #334155; font-size: 14px;">
+                        <b>${a.docLabel}</b> — ${tag}
+                        ${a.message ? `<br/><span style="font-size: 13px; color: #64748b;">${a.message}</span>` : ''}
+                    </li>`;
+        }).join('');
+        sections.push(`
+            <div style="margin: 0 0 22px;">
+                <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 8px;"><b>📄 Document Updates</b></p>
+                <ul style="margin: 0; padding-left: 18px;">${rows}</ul>
+            </div>
+        `);
+    }
+
+    if (sections.length === 0) {
+        return res.status(400).json({ success: false, message: 'Nothing to send' });
+    }
+
+    const body = `
+        <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 16px;">Dear ${applicantName || 'Guest'},</p>
+        <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 20px;">
+            Here is a summary of the latest updates on your Umrah request
+            ${requestNumber ? `<b>${requestNumber}</b>` : ''}${hotel ? ` (${hotel})` : ''}:
+        </p>
+        ${sections.join('')}
+        ${(checkIn || checkOut) ? `<div style="background: #f8fafc; border-radius: 10px; padding: 14px 16px; margin: 0 0 20px;"><p style="color: #334155; font-size: 14px; margin: 0;"><b>Dates:</b> ${checkIn || '—'} → ${checkOut || '—'}</p></div>` : ''}
+        ${contactBlockGeneral}
+        <div style="text-align: center; margin-top: 24px;">
+            <a href="https://ostravel.pk/dashboard" style="background: #2563eb; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: bold; font-size: 14px;">View My Request</a>
+        </div>
+        <p style="color: #475569; font-size: 14px; margin: 24px 0 0;">
+            Best regards,<br/>
+            <b>OS Travel and Tours Team</b>
+        </p>
+    `;
+
+    try {
+        await transporter.sendMail({
+            from: FROM_ADDRESS,
+            to,
+            subject: `Update on Your Umrah Request${requestNumber ? ' — ' + requestNumber : ''}`,
+            html: wrapEmail(body),
+        });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Email send error (umrah-consolidated-update):', err);
         res.status(500).json({ success: false, message: err.message });
     }
 });
