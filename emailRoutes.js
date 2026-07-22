@@ -468,6 +468,73 @@ router.post('/verify-document', async (req, res) => {
     }
 });
 
+// =====================================================================
+// --- NEW: Interview Documents Email ---
+// Sent by admin/sub-admin ONLY while a visa application is in the
+// "Interview" status. Lets staff push one or more files (e.g. interview
+// call letter, checklist, sample answers) straight to the applicant's
+// inbox, each with its own name/label. All docs are also saved onto the
+// Firestore doc (see VisaInterviewDocuments.jsx) so they show up on the
+// user's dashboard as well — this route just handles the email side.
+// =====================================================================
+router.post('/interview-documents', async (req, res) => {
+    const {
+        to, applicantName, applicationNumber, country, visaType,
+        note,        // string | null — optional free-text details from admin
+        documents,   // [{ name, url, fileName }] — required, at least 1
+    } = req.body;
+
+    if (!to || !Array.isArray(documents) || documents.length === 0) {
+        return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+
+    const docListHtml = documents.map(d =>
+        `<li style="margin-bottom: 6px; color: #334155; font-size: 14px;"><b>${d.name || 'Document'}</b></li>`
+    ).join('');
+
+    const body = `
+        <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 12px;">Dear ${applicantName || 'Applicant'},</p>
+        <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 16px;">
+            Ahead of your interview for visa application ${applicationNumber ? `<b>${applicationNumber}</b>` : ''}${country ? ` (${country}${visaType ? ', ' + visaType : ''})` : ''},
+            our team has sent you the following document(s):
+        </p>
+        <div style="background: #faf5ff; border-left: 4px solid #a855f7; border-radius: 0 8px 8px 0; padding: 14px 16px; margin: 0 0 20px;">
+            <p style="color: #6b21a8; font-size: 14px; margin: 0 0 8px; font-weight: bold;">📎 ${documents.length} document(s) attached to this email</p>
+            <ul style="margin: 0; padding-left: 18px;">${docListHtml}</ul>
+        </div>
+        ${note ? `<div style="background: #fffbeb; border-left: 4px solid #f59e0b; padding: 14px 16px; margin: 0 0 20px; border-radius: 0 6px 6px 0; color: #92400e; font-size: 14px; white-space: pre-wrap;">📋 ${note}</div>` : ''}
+        <p style="color: #64748b; font-size: 13px; margin: 0 0 20px;">You can also view and download these documents anytime from your dashboard.</p>
+        ${contactBlockVisa}
+        <div style="text-align: center; margin-top: 24px;">
+            <a href="https://ostravel.pk/dashboard" style="background: #2563eb; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: bold; font-size: 14px;">View My Application</a>
+        </div>
+        <p style="color: #475569; font-size: 14px; margin: 24px 0 0;">Best regards,<br/><b>OS Travel and Tours Team</b></p>
+    `;
+
+    try {
+        // Fetch every document and attach it. Fetches run in parallel;
+        // any single failure is dropped rather than failing the whole email.
+        const fetched = await Promise.all(
+            documents.map(d => fetchAttachment(d.url, d.fileName || d.name || 'document'))
+        );
+        const attachments = fetched
+            .filter(Boolean)
+            .map(a => ({ filename: a.filename, content: a.content, contentType: a.contentType }));
+
+        await transporter.sendMail({
+            from: FROM_ADDRESS,
+            to,
+            subject: `Interview Documents — ${applicationNumber || 'Your Visa Application'}`,
+            html: wrapEmail(body),
+            attachments,
+        });
+        res.json({ success: true, attached: attachments.length, requested: documents.length });
+    } catch (err) {
+        console.error('Email send error (interview-documents):', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // --- Consolidated Update Email (Visa) ---
 router.post('/consolidated-update', async (req, res) => {
     const {
