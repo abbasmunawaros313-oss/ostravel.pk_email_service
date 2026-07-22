@@ -64,13 +64,27 @@ const contactBlockGeneral = `
 `;
 
 // =====================================================================
+// --- recordType helpers ---
+// PaymentReturn.jsx sends recordType as one of 'visa' | 'umrah' | 'insurance'.
+// Previously this file only ever branched on `recordType === 'visa'` and
+// treated everything else as insurance, so Umrah payments were emailed out
+// as "travel insurance policy" invoices. This map is the single source of
+// truth for per-type labels so PDF + email stay in sync.
+// =====================================================================
+const SERVICE_LABELS = {
+    visa: 'Visa Application',
+    umrah: 'Umrah Package',
+    insurance: 'Travel Insurance',
+};
+
+// =====================================================================
 // --- Invoice PDF Generator ---
 // Builds a clean, professional one-page invoice PDF as a Buffer.
 // =====================================================================
 function generateInvoicePDF(data) {
     const {
         invoiceNumber, applicantName, email, phone,
-        recordType, country, visaType, planName,
+        recordType, country, visaType, planName, hotel,
         amountPaid, visaFee, urgentFee, urgentProcessing,
         transactionId, transactionRef, paymentMethod, paidAt,
     } = data;
@@ -82,12 +96,17 @@ function generateInvoicePDF(data) {
         : paidDate.toLocaleDateString('en-PK', { dateStyle: 'long' });
 
     const isVisa = recordType === 'visa';
-    const serviceType = isVisa ? 'Visa Application' : 'Travel Insurance';
+    const isUmrah = recordType === 'umrah';
+    const serviceType = SERVICE_LABELS[recordType] || SERVICE_LABELS.insurance;
 
     const breakdown = isVisa
         ? [
             { label: 'Visa Fee', amount: visaFee || (amountPaid - (urgentFee || 0)) },
             ...(urgentProcessing ? [{ label: 'Urgent Processing Fee', amount: urgentFee || 0 }] : []),
+        ]
+        : isUmrah
+        ? [
+            { label: hotel ? `Umrah Package - ${hotel}` : 'Umrah Package', amount: amountPaid },
         ]
         : [
             { label: planName ? `Insurance Premium - ${planName}` : 'Insurance Premium', amount: amountPaid },
@@ -127,6 +146,8 @@ function generateInvoicePDF(data) {
             doc.font('Helvetica').fontSize(10).fillColor('#334155').text(email || '-', 50, y);
             if (isVisa) {
                 doc.font('Helvetica').fontSize(10).fillColor('#334155').text(`Country: ${country || '-'}`, 320, y);
+            } else if (isUmrah) {
+                doc.font('Helvetica').fontSize(10).fillColor('#334155').text(`Hotel: ${hotel || '-'}`, 320, y);
             } else if (planName) {
                 doc.font('Helvetica').fontSize(10).fillColor('#334155').text(`Plan: ${planName}`, 320, y);
             }
@@ -186,16 +207,26 @@ function generateInvoicePDF(data) {
 router.post('/invoice', async (req, res) => {
     const {
         to, recordType, invoiceNumber, applicantName, email, phone,
-        country, visaType, planName, amountPaid, visaFee, urgentFee,
+        country, visaType, planName, hotel, amountPaid, visaFee, urgentFee,
         urgentProcessing, transactionId, transactionRef, paymentMethod, paidAt,
     } = req.body;
 
     if (!to || !amountPaid) return res.status(400).json({ success: false, message: 'Missing required fields' });
 
     const isVisa = recordType === 'visa';
+    const isUmrah = recordType === 'umrah';
+
+    // Build the "your X has been confirmed" line per record type, instead of
+    // the old binary isVisa ? visa : insurance check that mislabeled Umrah
+    // payments as insurance policies.
     const serviceLine = isVisa
         ? `visa application ${invoiceNumber ? `<b>${invoiceNumber}</b>` : ''}${country ? ` for <b>${country}</b>` : ''}`
+        : isUmrah
+        ? `Umrah package request ${invoiceNumber ? `<b>${invoiceNumber}</b>` : ''}${hotel ? ` for <b>${hotel}</b>` : ''}`
         : `travel insurance policy ${invoiceNumber ? `<b>${invoiceNumber}</b>` : ''}`;
+
+    const dashboardLink = isUmrah ? 'https://ostravel.pk/dashboard' : 'https://ostravel.pk/dashboard';
+    const contactBlock = isUmrah ? contactBlockGeneral : contactBlockVisa;
 
     const body = `
         <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 12px;">Dear ${applicantName || 'Customer'},</p>
@@ -208,24 +239,26 @@ router.post('/invoice', async (req, res) => {
             <p style="color: #334155; font-size: 14px; margin: 0 0 4px;"><b>Amount Paid:</b> PKR ${Number(amountPaid || 0).toLocaleString('en-PK')}</p>
             <p style="color: #334155; font-size: 14px; margin: 0;"><b>Transaction ID:</b> ${transactionId || '-'}</p>
         </div>
-        ${contactBlockVisa}
+        ${contactBlock}
         <div style="text-align: center; margin-top: 24px;">
-            <a href="https://ostravel.pk/dashboard" style="background: #2563eb; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: bold; font-size: 14px;">View My Dashboard</a>
+            <a href="${dashboardLink}" style="background: #2563eb; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: bold; font-size: 14px;">View My Dashboard</a>
         </div>
         <p style="color: #475569; font-size: 14px; margin: 24px 0 0;">Best regards,<br/><b>OS Travel and Tours Team</b></p>
     `;
 
+    const subjectLabel = isVisa ? 'Visa Application' : isUmrah ? 'Umrah Package' : 'Insurance Policy';
+
     try {
         const pdfBuffer = await generateInvoicePDF({
             invoiceNumber, applicantName, email, phone, recordType, country, visaType,
-            planName, amountPaid, visaFee, urgentFee, urgentProcessing,
+            planName, hotel, amountPaid, visaFee, urgentFee, urgentProcessing,
             transactionId, transactionRef, paymentMethod, paidAt,
         });
 
         await transporter.sendMail({
             from: FROM_ADDRESS,
             to,
-            subject: `Your Invoice — ${invoiceNumber || (isVisa ? 'Visa Application' : 'Insurance Policy')}`,
+            subject: `Your Invoice — ${invoiceNumber || subjectLabel}`,
             html: wrapEmail(body),
             attachments: [{
                 filename: `Invoice-${invoiceNumber || 'OSTravels'}.pdf`,
