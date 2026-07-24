@@ -17,6 +17,12 @@ const transporter = nodemailer.createTransport({
 
 const FROM_ADDRESS = '"O.S Travel & Tours" <ostravelsandtours@ostravels.com>';
 
+// Destination address for the generic "inquiry" emails fired by the
+// Flights / Hotels / Umrah "Email" buttons on the site. Hardcoded here
+// (not read from req.body) so a stray/blank `to` from the frontend can
+// never misroute an inquiry.
+const INQUIRY_TO_ADDRESS = 'ostravelsisb@gmail.com';
+
 // --- Fetch a remote file and return it as a Buffer for nodemailer attachment ---
 async function fetchAttachment(url, filename) {
     if (!url) return null;
@@ -502,7 +508,7 @@ router.post('/verify-document', async (req, res) => {
 });
 
 // =====================================================================
-// --- NEW: Interview Documents Email ---
+// --- Interview Documents Email ---
 // Sent by admin/sub-admin ONLY while a visa application is in the
 // "Interview" status. Lets staff push one or more files (e.g. interview
 // call letter, checklist, sample answers) straight to the applicant's
@@ -853,6 +859,67 @@ router.post('/umrah-consolidated-update', async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         console.error('Email send error (umrah-consolidated-update):', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// =====================================================================
+// --- NEW: Generic Inquiry Email (Flights / Hotels / Umrah "Email" buttons) ---
+// Fired directly from the public-facing site (no login required) whenever
+// a visitor taps the "Send Inquiry by Email" button on the Flights,
+// Hotels, or Umrah forms. Always lands in INQUIRY_TO_ADDRESS regardless
+// of anything the client sends, and optionally sets replyTo to the
+// customer's own email so staff can hit "Reply" directly.
+// =====================================================================
+router.post('/inquiry', async (req, res) => {
+    const {
+        type,          // 'Flight' | 'Hotel' | 'Umrah'
+        name,          // customer name (optional)
+        email,         // customer email (optional, used as replyTo)
+        phone,         // customer phone (optional)
+        details,       // { label: value, ... } — rendered as a table
+        message,       // optional free-text note from the customer
+    } = req.body;
+
+    if (!type || !details) {
+        return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+
+    const rows = Object.entries(details)
+        .filter(([, v]) => v !== undefined && v !== null && v !== '')
+        .map(([label, value]) => `
+            <tr>
+                <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; color: #64748b; font-size: 13px; font-weight: 600; white-space: nowrap;">${label}</td>
+                <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; color: #1a1a1a; font-size: 13px;">${value}</td>
+            </tr>
+        `).join('');
+
+    const body = `
+        <p style="color: #1a1a1a; font-size: 15px; margin: 0 0 12px;">📩 New <b>${type}</b> inquiry received from the website.</p>
+        <div style="background: #f8fafc; border-radius: 10px; padding: 6px 0; margin: 0 0 20px;">
+            <p style="color: #334155; font-size: 14px; margin: 8px 12px;"><b>Name:</b> ${name || '-'}</p>
+            <p style="color: #334155; font-size: 14px; margin: 8px 12px;"><b>Email:</b> ${email || '-'}</p>
+            <p style="color: #334155; font-size: 14px; margin: 8px 12px;"><b>Phone:</b> ${phone || '-'}</p>
+        </div>
+        <p style="color: #1a1a1a; font-size: 14px; margin: 0 0 8px; font-weight: bold;">Request Details</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 0 0 20px;">
+            ${rows}
+        </table>
+        ${message ? `<div style="background: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 14px; margin: 0 0 20px; border-radius: 0 6px 6px 0; color: #92400e; font-size: 14px; white-space: pre-wrap;">📝 ${message}</div>` : ''}
+        <p style="color: #94a3b8; font-size: 12px; margin: 0;">This inquiry was submitted through the ${type} form on ostravel.pk.</p>
+    `;
+
+    try {
+        await transporter.sendMail({
+            from: FROM_ADDRESS,
+            to: INQUIRY_TO_ADDRESS,
+            replyTo: email || undefined,
+            subject: `New ${type} Inquiry — ${name || 'Website Customer'}`,
+            html: wrapEmail(body),
+        });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Email send error (inquiry):', err);
         res.status(500).json({ success: false, message: err.message });
     }
 });
