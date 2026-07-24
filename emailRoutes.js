@@ -21,7 +21,7 @@ const FROM_ADDRESS = '"O.S Travel & Tours" <ostravelsandtours@ostravels.com>';
 // Flights / Hotels / Umrah "Email" buttons on the site. Hardcoded here
 // (not read from req.body) so a stray/blank `to` from the frontend can
 // never misroute an inquiry.
-const INQUIRY_TO_ADDRESS = 'ostravelsisb@gmail.com';
+const INQUIRY_TO_ADDRESS = 'ammadsajjad055@gmail.com';
 
 // --- Fetch a remote file and return it as a Buffer for nodemailer attachment ---
 async function fetchAttachment(url, filename) {
